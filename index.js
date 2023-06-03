@@ -138,7 +138,6 @@ async function run() {
             const result = await menuCollection.deleteOne(query);
             res.send(result);
         })
-
         // reviews related apis
         app.get("/reviews", async (req, res) => {
             const result = await reviewsCollection.find().toArray()
@@ -148,7 +147,7 @@ async function run() {
         // cart data apis   
         app.post("/create-payment-intent", verifyJWT, async (req, res) => {
             const { price } = req.body;
-            const amount = price * 100;
+            const amount = parseInt(price * 100);
             const paymentIntent = await stripe.paymentIntents.create({
                 amount: amount,
                 currency: "usd",
@@ -159,6 +158,7 @@ async function run() {
             })
         })
 
+        // payments related work
         app.post('/payments', verifyJWT, async (req, res) => {
             const payment = req.body;
             const insertResult = await paymentCollection.insertOne(payment);
@@ -167,6 +167,54 @@ async function run() {
             const deleteResult = await cartCollection.deleteMany(query)
 
             res.send({ insertResult, deleteResult });
+        })
+
+        app.get("/admin-stats", verifyJWT, verifyAdmin, async (req, res) => {
+            const payments = await paymentCollection.find().toArray();
+            const revenue = payments.reduce((sum, entry) => sum + entry.price, 0)
+
+            const orders = await paymentCollection.estimatedDocumentCount();
+            const customers = await userCollection.estimatedDocumentCount();
+            const products = await menuCollection.estimatedDocumentCount();
+
+
+            res.send({ revenue, customers, products, orders });
+        })
+
+        // chart related
+        app.get('/order-stats', verifyJWT, verifyAdmin, async (req, res) => {
+            const pipeline = [
+                {
+                    $lookup: {
+                        from: 'menu',
+                        localField: 'menuItems',
+                        foreignField: '_id',
+                        as: 'menuItemsData'
+                    }
+                },
+                {
+                    $unwind: '$menuItemsData'
+                },
+                {
+                    $group: {
+                        _id: '$menuItemsData.category',
+                        count: { $sum: 1 },
+                        total: { $sum: '$menuItemsData.price' }
+                    }
+                },
+                {
+                    $project: {
+                        category: '$_id',
+                        count: 1,
+                        total: { $round: ['$total', 2] },
+                        _id: 0
+                    }
+                }
+            ];
+
+            const result = await paymentCollection.aggregate(pipeline).toArray()
+            res.send(result)
+
         })
 
         app.get("/carts", verifyJWT, async (req, res) => {
